@@ -166,15 +166,16 @@ def create_thumbnail_image(title_text, category_text):
 tab1, tab2, tab3 = st.tabs(["📊 인급동 떡상 스튜디오", "🎙️ AI 대본 & 무료 TTS / 썸네일", "✂️ CapCut 연동 / 영상 분석"])
 
 # =========================================================
-# TAB 1: 인급동 떡상 스튜디오 (기간선택 + 쇼츠/롱폼 정밀 수집)
+# TAB 1: 인급동 떡상 스튜디오 (국가추가 + 기간선택 + 쇼츠/롱폼)
 # =========================================================
 with tab1:
     st.subheader("🔥 실시간 급상승 & 떡상 배수(Viral Score) 분석기")
-    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 원하는 기간별로 실시간 분석합니다.")
+    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 국가/기간별로 실시간 분석합니다.")
     
     col_a, col_b, col_c = st.columns([1, 1.2, 1])
     with col_a:
-        country_code = st.selectbox("🌍 대상 국가", ["대한민국 (KR)", "미국 (US)", "일본 (JP)"], index=0)
+        # 인도(IN), 대만(TW) 선택 옵션 추가
+        country_code = st.selectbox("🌍 대상 국가", ["대한민국 (KR)", "미국 (US)", "일본 (JP)", "인도 (IN)", "대만 (TW)"], index=0)
         c_code = country_code.split("(")[1].replace(")", "").strip()
     with col_b:
         format_filter = st.radio("🎬 영상 구분", ["📱 쇼츠만 (60초 이하)", "🎬 롱폼만", "전체 보기"], index=0, horizontal=True)
@@ -209,7 +210,7 @@ with tab1:
                 days_ago = period_days_map.get(period_choice, 30)
                 published_after = (datetime.utcnow() - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-                with st.spinner(f"🔍 [{period_choice}] 조건에 맞춰 실시간 유튜브 알고리즘을 분석 중입니다..."):
+                with st.spinner(f"🔍 [{country_code}] [{period_choice}] 조건에 맞춰 실시간 알고리즘을 분석 중입니다..."):
                     
                     if format_filter == "📱 쇼츠만 (60초 이하)":
                         q_str = search_query.strip() if search_query.strip() else "쇼츠"
@@ -259,7 +260,7 @@ with tab1:
                             v_ids = [item['id'] for item in res.get('items', [])]
 
                     if not v_ids:
-                        st.warning(f"⚠️ [{period_choice}] 검색 조건에 맞는 영상이 없습니다. 키워드나 기간을 변경해 보세요.")
+                        st.warning(f"⚠️ [{country_code}] [{period_choice}] 조건에 맞는 영상이 없습니다. 키워드나 기간을 변경해 보세요.")
                     else:
                         v_details = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(v_ids)).execute()
                         c_ids = [v['snippet']['channelId'] for v in v_details.get('items', [])]
@@ -297,7 +298,7 @@ with tab1:
                         
                         viral_results = sorted(viral_results, key=lambda x: x['viral_ratio'], reverse=True)
                         st.session_state['viral_results'] = viral_results
-                        st.success(f"🎉 성공적으로 [{period_choice}] 내 {len(viral_results)}개의 [{format_filter}] 실시간 데이터를 분석했습니다!")
+                        st.success(f"🎉 성공적으로 [{country_code}] [{period_choice}] 내 {len(viral_results)}개의 [{format_filter}] 실시간 데이터를 분석했습니다!")
                         
             except Exception as e:
                 st.error(f"❌ YouTube API 수집 오류 발생: {e}")
