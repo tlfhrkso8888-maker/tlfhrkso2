@@ -17,9 +17,9 @@ st.title("📊 실시간 황금 키워드 & 트렌드 빅데이터 분석기")
 st.caption("네이버·구글 빅데이터와 Gemini AI를 활용해 실시간 떡상 키워드를 발굴합니다.")
 
 # ==================== 🔑 기본 API 키 자동 저장 세팅 ====================
-DEFAULT_GEMINI_API_KEY = "AIzaSyAT-UjhI6JB4TaS1mPfUVw-uCln_7bnLQ4"
-DEFAULT_NAVER_CLIENT_ID = "G305nS1fA0W2MhIn1bIn"
-DEFAULT_NAVER_CLIENT_SECRET = "UeZ3M37bTh"
+DEFAULT_GEMINI_API_KEY = "AQ.Ab8RN6L4bYpCLvbjMIS5f1Yx47WTf_PYa1evH1QdKcQO_Hs3mg"
+DEFAULT_NAVER_CLIENT_ID = "010000000017bb464266907081adf935c8e92cba1e5789796bf00d9d66a86dc1b3b7645ce1"
+DEFAULT_NAVER_CLIENT_SECRET = "AQAAAAAXu0ZCZpBwga35NcjpLLoetGRNauzb4zwzBIjguwnnow=="
 
 # ==================== 🛠️ 사이드바 세팅 ====================
 with st.sidebar:
