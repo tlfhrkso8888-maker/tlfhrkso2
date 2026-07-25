@@ -1,4 +1,6 @@
 streamlit
-pandas
-requests
 google-api-python-client
+pandas
+pillow
+requests
+edge-tts
