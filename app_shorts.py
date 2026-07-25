@@ -166,15 +166,14 @@ def create_thumbnail_image(title_text, category_text):
 tab1, tab2, tab3 = st.tabs(["📊 인급동 떡상 스튜디오", "🎙️ AI 대본 & 무료 TTS / 썸네일", "✂️ CapCut 연동 / 영상 분석"])
 
 # =========================================================
-# TAB 1: 인급동 떡상 스튜디오 (국가추가 + 기간선택 + 쇼츠/롱폼)
+# TAB 1: 인급동 떡상 스튜디오 (언어 매핑 + 쇼츠/롱폼 정밀 수집)
 # =========================================================
 with tab1:
     st.subheader("🔥 실시간 급상승 & 떡상 배수(Viral Score) 분석기")
-    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 국가/기간별로 실시간 분석합니다.")
+    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 국가/언어/기간별로 정밀 분석합니다.")
     
     col_a, col_b, col_c = st.columns([1, 1.2, 1])
     with col_a:
-        # 인도(IN), 대만(TW) 선택 옵션 추가
         country_code = st.selectbox("🌍 대상 국가", ["대한민국 (KR)", "미국 (US)", "일본 (JP)", "인도 (IN)", "대만 (TW)"], index=0)
         c_code = country_code.split("(")[1].replace(")", "").strip()
     with col_b:
@@ -198,6 +197,10 @@ with tab1:
             try:
                 youtube = build('youtube', 'v3', developerKey=clean_yt_key)
                 
+                # 국가별 타깃 언어 코드 매핑
+                lang_map = {"KR": "ko", "US": "en", "JP": "ja", "IN": "hi", "TW": "zh-Hant"}
+                target_lang = lang_map.get(c_code, "ko")
+
                 # 기간 파싱 (ISO 8601 publishedAfter 날짜 계산)
                 period_days_map = {
                     "1주일 이내": 7,
@@ -210,32 +213,36 @@ with tab1:
                 days_ago = period_days_map.get(period_choice, 30)
                 published_after = (datetime.utcnow() - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-                with st.spinner(f"🔍 [{country_code}] [{period_choice}] 조건에 맞춰 실시간 알고리즘을 분석 중입니다..."):
+                with st.spinner(f"🔍 [{country_code}] [{period_choice}] 조건에 맞춰 현지 언어 알고리즘을 수집 중입니다..."):
                     
                     if format_filter == "📱 쇼츠만 (60초 이하)":
-                        q_str = search_query.strip() if search_query.strip() else "쇼츠"
+                        default_q = "쇼츠" if c_code == "KR" else "Shorts"
+                        q_str = search_query.strip() if search_query.strip() else default_q
                         res = youtube.search().list(
                             part="snippet",
                             type="video",
                             videoDuration="short",
                             publishedAfter=published_after,
                             q=q_str,
-                            order="viewCount",
                             regionCode=c_code,
-                            maxResults=max_items
+                            relevanceLanguage=target_lang,
+                            order="viewCount",
+                            maxResults=max_items * 2
                         ).execute()
                         v_ids = [item['id']['videoId'] for item in res.get('items', []) if 'videoId' in item['id']]
                     elif format_filter == "🎬 롱폼만":
-                        q_str = search_query.strip() if search_query.strip() else "리뷰"
+                        default_q = "리뷰" if c_code == "KR" else "Review"
+                        q_str = search_query.strip() if search_query.strip() else default_q
                         res = youtube.search().list(
                             part="snippet",
                             type="video",
                             videoDuration="medium",
                             publishedAfter=published_after,
                             q=q_str,
-                            order="viewCount",
                             regionCode=c_code,
-                            maxResults=max_items
+                            relevanceLanguage=target_lang,
+                            order="viewCount",
+                            maxResults=max_items * 2
                         ).execute()
                         v_ids = [item['id']['videoId'] for item in res.get('items', []) if 'videoId' in item['id']]
                     else: # 전체 보기
@@ -245,9 +252,10 @@ with tab1:
                                 type="video",
                                 publishedAfter=published_after,
                                 q=search_query.strip(),
-                                order="viewCount",
                                 regionCode=c_code,
-                                maxResults=max_items
+                                relevanceLanguage=target_lang,
+                                order="viewCount",
+                                maxResults=max_items * 2
                             ).execute()
                             v_ids = [item['id']['videoId'] for item in res.get('items', []) if 'videoId' in item['id']]
                         else:
@@ -255,14 +263,14 @@ with tab1:
                                 part="snippet,statistics,contentDetails",
                                 chart="mostPopular",
                                 regionCode=c_code,
-                                maxResults=max_items
+                                maxResults=max_items * 2
                             ).execute()
                             v_ids = [item['id'] for item in res.get('items', [])]
 
                     if not v_ids:
                         st.warning(f"⚠️ [{country_code}] [{period_choice}] 조건에 맞는 영상이 없습니다. 키워드나 기간을 변경해 보세요.")
                     else:
-                        v_details = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(v_ids)).execute()
+                        v_details = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(v_ids[:50])).execute()
                         c_ids = [v['snippet']['channelId'] for v in v_details.get('items', [])]
                         sub_map = get_channel_subscribers(youtube, c_ids)
                         
@@ -283,9 +291,16 @@ with tab1:
                             subs = sub_map.get(c_id, 1)
                             viral_ratio = round(views / subs, 2) if subs > 0 else 0
                             
+                            title_text = snippet['title']
+                            
+                            # 한국 선택 시 한글이 전혀 없는 외국어 쇼츠 필터링 강화
+                            if c_code == "KR" and format_filter == "📱 쇼츠만 (60초 이하)":
+                                if not re.search(r'[가-힣]', title_text) and not search_query.strip():
+                                    continue
+
                             viral_results.append({
                                 'v_id': v_id,
-                                'title': snippet['title'],
+                                'title': title_text,
                                 'channel': snippet['channelTitle'],
                                 'views': views,
                                 'subs': subs,
@@ -295,10 +310,13 @@ with tab1:
                                 'is_shorts': is_shorts,
                                 'time_str': formatted_time if total_sec > 0 else "Shorts"
                             })
+                            
+                            if len(viral_results) >= max_items:
+                                break
                         
                         viral_results = sorted(viral_results, key=lambda x: x['viral_ratio'], reverse=True)
                         st.session_state['viral_results'] = viral_results
-                        st.success(f"🎉 성공적으로 [{country_code}] [{period_choice}] 내 {len(viral_results)}개의 [{format_filter}] 실시간 데이터를 분석했습니다!")
+                        st.success(f"🎉 성공적으로 [{country_code}] 내 {len(viral_results)}개의 [{format_filter}] 한국/현지어 맞춤 실시간 데이터를 수집했습니다!")
                         
             except Exception as e:
                 st.error(f"❌ YouTube API 수집 오류 발생: {e}")
