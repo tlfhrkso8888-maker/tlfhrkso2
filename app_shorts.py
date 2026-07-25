@@ -1,86 +1,134 @@
 import streamlit as st
 from googleapiclient.discovery import build
+import pandas as pd
 from datetime import datetime, timedelta
 import re
+import requests
+import json
+from PIL import Image, ImageDraw, ImageFont
+import io
+import asyncio
+import edge_tts
 
-# 1. 페이지 기본 설정
+# ---------------------------------------------------------
+# 🔑 API 키 자동 입력 설정 (대표님의 키를 따옴표 안에 넣어두실 수 있습니다)
+# ---------------------------------------------------------
+DEFAULT_YT_KEY = ""       # 예: "AIzaSy..."
+DEFAULT_GEMINI_KEY = ""   # 예: "AIzaSy..."
+
+# ---------------------------------------------------------
+# 1. 페이지 기본 설정 & 모던 UI CSS
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="글로벌 쇼츠 떡상 분석 대시보드",
-    page_icon="🎬",
+    page_title="어비 스타일 AI 크리에이터 스튜디오",
+    page_icon="🚀",
     layout="wide"
 )
 
-# 2. 언어 정밀 검증 함수 (해외 낚시 쇼츠 100% 차단)
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 28px;
+        font-weight: 800;
+        color: #FF4B4B;
+        text-align: center;
+        margin-bottom: 5px;
+    }
+    .sub-header {
+        font-size: 15px;
+        color: #888888;
+        text-align: center;
+        margin-bottom: 25px;
+    }
+    .viral-badge {
+        background-color: #FF4B4B;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 12px;
+    }
+    .shorts-badge {
+        background-color: #E60023;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 12px;
+    }
+    .long-badge {
+        background-color: #2563EB;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 12px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("<div class='main-header'>🚀 AI 크리에이터 올인원 스튜디오</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>실시간 인기급상승 동영상 분석 ➔ 내 채널 맞춤 대본 ➔ 무료 TTS & 썸네일 자동화</div>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 2. 사이드바 - 설정 및 API 키 관리 (자동 채움 연동)
+# ---------------------------------------------------------
+with st.sidebar:
+    st.header("⚙️ 스튜디오 환경 설정")
+    
+    youtube_api_key_input = st.text_input("🔑 YouTube API Key", value=DEFAULT_YT_KEY, type="password", help="기본 키가 자동으로 채워집니다")
+    gemini_api_key_input = st.text_input("🔮 Google Gemini API Key", value=DEFAULT_GEMINI_KEY, type="password", help="기본 키가 자동으로 채워집니다")
+    
+    st.divider()
+    
+    st.subheader("👤 내 채널 페르소나 연동")
+    my_channel_name = st.text_input("채널명 / 크리에이터 닉네임", value="어비월드")
+    my_channel_style = st.selectbox(
+        "채널 주 말투/톤앤매너",
+        ["친근하고 전문적인 설명조 (~입니다/해볼게요)", "빠르고 흥미진진한 쇼츠 텐션 (~했는데요! 실화냐?)", "차분하고 지적인 정보 전달조", "유머러스하고 재치있는 어조"]
+    )
+    my_main_topic = st.text_input("주요 카테고리/주제", value="IT/AI 신기술 리뷰 & 꿀팁")
+
+# ---------------------------------------------------------
+# 3. Helper 및 정밀 언어 검증 함수
+# ---------------------------------------------------------
 def is_valid_language(text, lang_code):
+    """선택한 국가의 순수 현지 언어가 제목/채널명에 포함되었는지 검증하여 타국가 낚시 영상 차단"""
     if lang_code == "ja":
-        # 히라가나(\u3040-\u309F) 또는 가타카나(\u30A0-\u30FF)가 최소 1글자 이상 포함되어야 일본 현지 쇼츠로 인정
+        # 히라가나(\u3040-\u309F) 또는 가타카나(\u30A0-\u30FF)가 최소 1글자 이상 포함되어야 일본 현지 영상 인정
         return bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF]', text))
     elif lang_code == "ko":
         # 완성된 한글(가-힣) 포함 여부 검사
         return bool(re.search(r'[가-힣]', text))
     elif lang_code == "vi":
-        # 베트남어 특수 문자 검사
-        return bool(re.search(r'[àáâãèéêìíòóôõùúýàáảãạầấẩẫậềếểễệỉịỏóổỗộởỡờớợủúủứừứựỳỵỷỹ]', text, re.IGNORECASE))
+        # 베트남어 성조 문자 검사
+        return bool(re.search(r'[àáâãèéêìíòóôõùúýàáảãạầấẩẫậềếểễệỉịỏó골ỗộởỡờớợủúủứừứựỳỵỷỹ]', text, re.IGNORECASE))
     elif lang_code == "hi":
         # 힌디어 데바나가리 문자 검사
         return bool(re.search(r'[\u0900-\u097F]', text))
-    elif lang_code == "zh-TW":
-        # 대만/번체자 한자 범위 검사
+    elif lang_code == "zh-Hant":
+        # 대만/번체 한자 범위 검사
         return bool(re.search(r'[\u4e00-\u9fff]', text))
     return True
 
-# 3. 사이드바 설정
-with st.sidebar:
-    st.header("⚙️ 분석 조건 설정")
+def parse_duration(duration_str):
+    """ISO 8601 재생시간(PT1M30S)을 초 단위 및 00:00 포맷으로 변환"""
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match:
+        return 0, "00:00"
     
-    # API 키 자동 기본값 설정
-    DEFAULT_YT_KEY = "" # 필요 시 키를 직접 넣어두실 수 있습니다.
-    DEFAULT_GEMINI_KEY = ""
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
     
-    yt_api_key = st.text_input("🔑 YouTube API Key", value=DEFAULT_YT_KEY, type="password")
-    gemini_api_key = st.text_input("🔮 Google Gemini API Key", value=DEFAULT_GEMINI_KEY, type="password")
+    total_seconds = hours * 3600 + minutes * 60 + seconds
     
-    st.divider()
-    
-    country_config = {
-        "일본 🇯🇵": {
-            "region": "JP", "lang": "ja",
-            "keywords": ["ショート", "バズ", "おすすめ", "日常", "検証"]
-        },
-        "대한민국 🇰🇷": {
-            "region": "KR", "lang": "ko",
-            "keywords": ["쇼츠", "떡상", "일상", "리뷰", "유머"]
-        },
-        "미국 🇺🇸": {
-            "region": "US", "lang": "en",
-            "keywords": ["viral shorts", "trending shorts", "funny shorts", "hacks"]
-        },
-        "인도 🇮🇳": {
-            "region": "IN", "lang": "hi",
-            "keywords": ["shorts", "viral shorts", "trending shorts", "comedy shorts"]
-        },
-        "대만 🇹🇼": {
-            "region": "TW", "lang": "zh-TW",
-            "keywords": ["短影音", "熱門", "搞笑", "推薦"]
-        }
-    }
-    
-    selected_country_label = st.selectbox("🌍 대상 국가 선택", list(country_config.keys()))
-    c_info = country_config[selected_country_label]
-    
-    period_days = st.selectbox("📅 게시 기간 선택", [7, 14, 30, 60, 90, 180, 365], index=0, format_func=lambda x: f"최근 {x}일 이내")
-    
-    sub_filter = st.selectbox(
-        "👥 채널 구독자 수 구간",
-        ["전체 채널 (모두 보기)", "1만 명 미만 (초기 떡상)", "1만 ~ 10만 명", "10만 ~ 100만 명", "100만 명 이상"]
-    )
-    
-    target_count = st.slider("🏆 수집 상위 순위 (TOP N)", min_value=5, max_value=50, value=20, step=5)
-    
-    btn_fetch = st.button("🚀 실시간 인기 쇼츠 순위 불러오기")
-
-st.title("🎬 실시간 국가별 떡상 쇼츠 분석기")
-st.caption("선택한 국가의 현지 언어 패턴을 정밀 분석하여 타 국가 낚시 영상을 완벽히 차단합니다.")
+    if hours > 0:
+        time_format = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        time_format = f"{minutes:02d}:{seconds:02d}"
+        
+    return total_seconds, time_format
 
 def get_channel_subscribers(youtube, channel_ids):
     if not channel_ids:
@@ -91,129 +139,312 @@ def get_channel_subscribers(youtube, channel_ids):
         chunk = channel_ids[i:i+50]
         res = youtube.channels().list(part="statistics", id=",".join(chunk)).execute()
         for item in res.get("items", []):
-            sub_map[item["id"]] = int(item["statistics"].get("subscriberCount", 0))
+            sub_map[item["id"]] = int(item["statistics"].get("subscriberCount", 1))
     return sub_map
 
-def check_sub_filter(sub_count, filter_type):
-    if filter_type == "1만 명 미만 (초기 떡상)":
-        return sub_count < 10000
-    elif filter_type == "1만 ~ 10만 명":
-        return 10000 <= sub_count < 100000
-    elif filter_type == "10만 ~ 100만 명":
-        return 100000 <= sub_count < 1000000
-    elif filter_type == "100만 명 이상":
-        return sub_count >= 1000000
-    return True
+def generate_gemini_text(api_key, prompt):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        if res.status_code == 200:
+            result = res.json()
+            return result['candidates'][0]['content']['parts'][0]['text']
+        else:
+            fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            res_fb = requests.post(fallback_url, headers=headers, json=payload, timeout=30)
+            if res_fb.status_code == 200:
+                return res_fb.json()['candidates'][0]['content']['parts'][0]['text']
+            return f"오류_{res.status_code}: {res.text}"
+    except Exception as e:
+        return f"통신오류: {e}"
 
-if btn_fetch:
-    if not yt_api_key.strip():
-        st.error("⚠️ YouTube API Key를 입력해 주세요.")
-    else:
-        try:
-            youtube = build('youtube', 'v3', developerKey=yt_api_key.strip())
-            
-            with st.spinner(f"🚀 {selected_country_label} 현지 쇼츠 정밀 수집 및 검증 중..."):
-                published_after = (datetime.utcnow() - timedelta(days=period_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
-                raw_video_ids = []
+async def text_to_speech_edge(text, voice="ko-KR-SunHiNeural", output_file="speech.mp3"):
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(output_file)
+
+def create_thumbnail_image(title_text, category_text):
+    img = Image.new('RGB', (1280, 720), color=(24, 24, 37))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([80, 100, 380, 160], fill=(255, 75, 75))
+    draw.text((100, 115), category_text, fill=(255, 255, 255))
+    lines = [title_text[i:i+12] for i in range(0, len(title_text), 12)]
+    y_offset = 260
+    for line in lines[:3]:
+        draw.text((80, y_offset), line, fill=(255, 255, 255))
+        y_offset += 100
+    draw.text((80, 600), "🔥 지금 바로 확인하세요!", fill=(255, 215, 0))
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+# ---------------------------------------------------------
+# 4. 메인 대시보드 탭
+# ---------------------------------------------------------
+tab1, tab2, tab3 = st.tabs(["📊 인급동 떡상 스튜디오", "🎙️ AI 대본 & 무료 TTS / 썸네일", "✂️ CapCut 연동 / 영상 분석"])
+
+# =========================================================
+# TAB 1: 인급동 떡상 스튜디오 (현지 언어 정밀 필터링 연동)
+# =========================================================
+with tab1:
+    st.subheader("🔥 실시간 급상승 & 떡상 배수(Viral Score) 분석기")
+    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 현지 떡상 영상을 정밀 수집 및 검증합니다.")
+    
+    col_a, col_b, col_c = st.columns([1, 1.2, 1])
+    with col_a:
+        country_code = st.selectbox("🌍 대상 국가", ["대한민국 (KR)", "미국 (US)", "일본 (JP)", "인도 (IN)", "대만 (TW)"], index=0)
+        c_code = country_code.split("(")[1].replace(")", "").strip()
+    with col_b:
+        format_filter = st.radio("🎬 영상 구분", ["📱 쇼츠만 (60초 이하)", "🎬 롱폼만", "전체 보기"], index=0, horizontal=True)
+    with col_c:
+        period_choice = st.selectbox("📅 게시 기간 선택", ["1주일 이내", "1개월 이내", "2개월 이내", "3개월 이내", "6개월 이내", "1년 이내"], index=1)
+
+    col_d, col_e = st.columns([2, 1])
+    with col_d:
+        search_query = st.text_input("🔍 키워드 필터 (선택)", value="", placeholder="예: AI, 먹방, 꿀팁 (비워두면 현지 떡상 키워드 자동 적용)")
+    with col_e:
+        max_items = st.slider("📊 수집 개수", min_value=10, max_value=50, value=20, step=10)
+        
+    btn_fetch = st.button("🚀 실시간 떡상 콘텐츠 수집 및 분석 시작")
+    
+    if btn_fetch:
+        clean_yt_key = youtube_api_key_input.strip()
+        if not clean_yt_key:
+            st.error("🚨 사이드바에 YouTube API Key를 입력해 주세요!")
+        else:
+            try:
+                youtube = build('youtube', 'v3', developerKey=clean_yt_key)
                 
-                # 1단계: 현지 키워드 및 언어/지역 조합 검색
-                for kw in c_info["keywords"]:
-                    if len(raw_video_ids) >= 150:
-                        break
-                    s_res = youtube.search().list(
-                        part="snippet",
-                        q=kw,
-                        type="video",
-                        videoDuration="short",
-                        order="viewCount",
-                        publishedAfter=published_after,
-                        regionCode=c_info["region"],
-                        relevanceLanguage=c_info["lang"],
-                        maxResults=50
-                    ).execute()
+                lang_map = {"KR": "ko", "US": "en", "JP": "ja", "IN": "hi", "TW": "zh-Hant"}
+                target_lang = lang_map.get(c_code, "ko")
+
+                period_days_map = {
+                    "1주일 이내": 7, "1개월 이내": 30, "2개월 이내": 60,
+                    "3개월 이내": 90, "6개월 이내": 180, "1년 이내": 365
+                }
+                days_ago = period_days_map.get(period_choice, 30)
+                published_after = (datetime.utcnow() - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+                # 현지 대표 떡상 키워드 매핑
+                country_default_kw = {
+                    "KR": ["쇼츠", "떡상", "리뷰", "일상"],
+                    "US": ["shorts", "viral", "trending", "hacks"],
+                    "JP": ["ショート", "バズ", "おすすめ", "日常"],
+                    "IN": ["shorts", "viral shorts", "trending shorts"],
+                    "TW": ["短影音", "熱門", "搞笑", "推薦"]
+                }
+
+                with st.spinner(f"🔍 [{country_code}] 현지 언어 정밀 필터링 및 떡상 알고리즘 수집 중..."):
+                    raw_v_ids = []
                     
-                    for item in s_res.get("items", []):
-                        if 'videoId' in item['id']:
-                            raw_video_ids.append(item['id']['videoId'])
-                
-                if not raw_video_ids:
-                    st.warning("⚠️ 해당 기간 내 검색된 쇼츠가 없습니다. 게시 기간을 넓혀보세요.")
-                else:
-                    # 2단계: 비디오 세부 정보 가져오기
-                    raw_video_ids = list(set(raw_video_ids))
-                    video_items = []
-                    for i in range(0, len(raw_video_ids), 50):
-                        chunk = raw_video_ids[i:i+50]
-                        v_res = youtube.videos().list(
-                            part="snippet,statistics,contentDetails",
-                            id=",".join(chunk)
-                        ).execute()
-                        video_items.extend(v_res.get("items", []))
-                    
-                    # 3단계: 채널 구독자 정보 수집
-                    ch_ids = [v['snippet']['channelId'] for v in video_items if 'snippet' in v and 'channelId' in v['snippet']]
-                    sub_map = get_channel_subscribers(youtube, ch_ids)
-                    
-                    # 4단계: 현지 언어 정밀 필터링 및 데이터 가공
-                    final_results = []
-                    for v in video_items:
-                        snippet = v.get('snippet', {})
-                        stats = v.get('statistics', {})
-                        content_details = v.get('contentDetails', {})
-                        
-                        title = snippet.get('title', '')
-                        ch_title = snippet.get('channelTitle', '')
-                        
-                        # [핵심] 현지 문자가 제목이나 채널명에 들어갔는지 검증하여 타 국가 낚시 쇼츠 차단
-                        if not is_valid_language(title + ch_title, c_info["lang"]):
-                            continue
-                        
-                        # 재생시간 검증 (60초 이하 쇼츠)
-                        duration = content_details.get("duration", "")
-                        if "M" in duration and duration != "PT1M":
-                            continue
-                        
-                        ch_id = snippet.get('channelId', '')
-                        sub_count = sub_map.get(ch_id, 0)
-                        
-                        if check_sub_filter(sub_count, sub_filter):
-                            views = int(stats.get('viewCount', 0))
-                            likes = int(stats.get('likeCount', 0))
-                            pub_at = snippet.get('publishedAt', '')[:10]
-                            thumbs = snippet.get('thumbnails', {})
-                            thumb_url = thumbs.get('medium', {}).get('url', thumbs.get('default', {}).get('url', ''))
-                            
-                            final_results.append({
-                                "v_id": v['id'],
-                                "title": title,
-                                "ch_title": ch_title,
-                                "views": views,
-                                "likes": likes,
-                                "subs": sub_count,
-                                "pub_at": pub_at,
-                                "thumb": thumb_url,
-                                "url": f"https://www.youtube.com/shorts/{v['id']}"
-                            })
-                    
-                    # 조회수 순 정렬
-                    final_results = sorted(final_results, key=lambda x: x['views'], reverse=True)[:target_count]
-                    
-                    if not final_results:
-                        st.warning("⚠️ 언어 및 구독자 조건에 일치하는 순수 현지 쇼츠가 없습니다. 구독자 수 구간을 '전체 채널'로 설정해 보세요.")
+                    if search_query.strip():
+                        search_kws = [search_query.strip()]
                     else:
-                        st.success(f"✅ {selected_country_label} 순수 현지 떡상 쇼츠 TOP {len(final_results)} 수집 완료!")
-                        
-                        for rank, item in enumerate(final_results, start=1):
-                            col1, col2 = st.columns([1, 3])
-                            with col1:
-                                if item['thumb']:
-                                    st.image(item['thumb'], use_container_width=True)
-                            with col2:
-                                st.subheader(f"🏆 {rank}위. {item['title']}")
-                                st.write(f"📺 **채널명**: {item['ch_title']} | 👥 **구독자 수**: {item['subs']:,}명 | 📅 **게시일**: {item['pub_at']}")
-                                st.write(f"🔥 **조회수**: {item['views']:,}회 | 👍 **좋아요**: {item['likes']:,}개")
-                                st.markdown(f"[👉 쇼츠 영상 바로가기]({item['url']})")
-                            st.divider()
+                        search_kws = country_default_kw.get(c_code, ["shorts"])
 
-        except Exception as e:
-            st.error(f"❌ 수집 중 오류가 발생했습니다: {e}")
+                    for kw in search_kws:
+                        if len(raw_v_ids) >= max_items * 3:
+                            break
+                        
+                        dur_param = "short" if format_filter == "📱 쇼츠만 (60초 이하)" else ("medium" if format_filter == "🎬 롱폼만" else "any")
+                        s_res = youtube.search().list(
+                            part="snippet",
+                            type="video",
+                            videoDuration=dur_param if dur_param != "any" else None,
+                            publishedAfter=published_after,
+                            q=kw,
+                            regionCode=c_code,
+                            relevanceLanguage=target_lang,
+                            order="viewCount",
+                            maxResults=50
+                        ).execute()
+                        
+                        for item in s_res.get('items', []):
+                            if 'videoId' in item['id']:
+                                raw_v_ids.append(item['id']['videoId'])
+
+                    raw_v_ids = list(set(raw_v_ids))
+                    
+                    if not raw_v_ids:
+                        st.warning(f"⚠️ [{country_code}] [{period_choice}] 조건에 맞는 영상이 없습니다. 키워드나 기간을 변경해 보세요.")
+                    else:
+                        v_details = []
+                        for i in range(0, len(raw_v_ids), 50):
+                            chunk = raw_v_ids[i:i+50]
+                            res = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(chunk)).execute()
+                            v_details.extend(res.get('items', []))
+                        
+                        c_ids = [v['snippet']['channelId'] for v in v_details if 'snippet' in v]
+                        sub_map = get_channel_subscribers(youtube, c_ids)
+                        
+                        viral_results = []
+                        for v in v_details:
+                            v_id = v['id']
+                            snippet = v.get('snippet', {})
+                            stats = v.get('statistics', {})
+                            content_details = v.get('contentDetails', {})
+                            
+                            title_text = snippet.get('title', '')
+                            channel_title = snippet.get('channelTitle', '')
+                            
+                            # [핵심] 현지 언어가 제목/채널명에 들어갔는지 검증하여 타 국가 낚시 영상 100% 차단
+                            if not is_valid_language(title_text + channel_title, target_lang):
+                                continue
+                            
+                            dur_str = content_details.get('duration', 'PT0S')
+                            total_sec, formatted_time = parse_duration(dur_str)
+                            
+                            is_shorts = (total_sec > 0 and total_sec <= 60) or (format_filter == "📱 쇼츠만 (60초 이하)")
+                            
+                            if format_filter == "📱 쇼츠만 (60초 이하)" and not is_shorts:
+                                continue
+                            elif format_filter == "🎬 롱폼만" and is_shorts:
+                                continue
+
+                            views = int(stats.get('viewCount', 0))
+                            c_id = snippet.get('channelId', '')
+                            subs = sub_map.get(c_id, 1)
+                            viral_ratio = round(views / subs, 2) if subs > 0 else 0
+                            
+                            viral_results.append({
+                                'v_id': v_id,
+                                'title': title_text,
+                                'channel': channel_title,
+                                'views': views,
+                                'subs': subs,
+                                'viral_ratio': viral_ratio,
+                                'thumb': snippet.get('thumbnails', {}).get('medium', {}).get('url', ''),
+                                'published': snippet.get('publishedAt', '')[:10],
+                                'is_shorts': is_shorts,
+                                'time_str': formatted_time if total_sec > 0 else "Shorts"
+                            })
+                        
+                        # 떡상 배수 기준 내림차순 정렬
+                        viral_results = sorted(viral_results, key=lambda x: x['viral_ratio'], reverse=True)[:max_items]
+                        st.session_state['viral_results'] = viral_results
+                        st.success(f"🎉 성공적으로 [{country_code}] 순수 현지 맞춤 실시간 {len(viral_results)}개 데이터를 수집했습니다!")
+                        
+            except Exception as e:
+                st.error(f"❌ YouTube API 수집 오류 발생: {e}")
+
+    # 결과 출력
+    if 'viral_results' in st.session_state and st.session_state['viral_results']:
+        st.divider()
+        st.subheader("🏆 [떡상 배수 순] 실시간 현지 콘텐츠 랭킹")
+        
+        for idx, item in enumerate(st.session_state['viral_results'], start=1):
+            with st.container():
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if item['thumb']:
+                        st.image(item['thumb'], use_container_width=True)
+                with col2:
+                    if item['is_shorts']:
+                        tag_html = f"<span class='shorts-badge'>📱 Shorts ({item['time_str']})</span>"
+                    else:
+                        tag_html = f"<span class='long-badge'>🎬 Long-form ({item['time_str']})</span>"
+                        
+                    st.markdown(f"#### {idx}위. {item['title']} {tag_html}", unsafe_allow_html=True)
+                    st.markdown(f"📺 **채널**: {item['channel']} | 👥 **구독자**: {item['subs']:,}명 | 🔥 **조회수**: {item['views']:,}회 | 📅 **게시일**: {item['published']}")
+                    st.markdown(f"⚡ **떡상 배수**: <span class='viral-badge'>체급 대비 x{item['viral_ratio']}배 떡상!</span>", unsafe_allow_html=True)
+                    
+                    if item['is_shorts']:
+                        st.markdown(f"👉 [유튜브 쇼츠에서 보기](https://www.youtube.com/shorts/{item['v_id']})")
+                    else:
+                        st.markdown(f"👉 [유튜브 롱폼에서 보기](https://www.youtube.com/watch?v={item['v_id']})")
+                st.divider()
+
+# =========================================================
+# TAB 2: AI 대본 & 무료 TTS / 썸네일 생성기
+# =========================================================
+with tab2:
+    st.subheader("🔮 내 채널 맞춤 AI 대본 & 무료 TTS/썸네일 결합기")
+    topic_input = st.text_input("💡 포스팅/영상으로 만들 주제 입력", value="2026년 AI 신기술로 방구석에서 월 500만 원 버는 자동화 시스템")
+    
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        script_format = st.radio("포맷 선택", ["쇼츠 대본 (60초 규격)", "롱폼 대본 (3분~5분 규격)"], horizontal=True)
+    with col_d2:
+        include_tts = st.checkbox("🎙️ 대본 생성 후 무료 AI 나레이션(TTS) 파일 자동 추출", value=True)
+        
+    btn_make_script = st.button("✨ 내 말투가 적용된 원클릭 대본 생성")
+    
+    if btn_make_script:
+        clean_gemini_key = gemini_api_key_input.strip()
+        if not clean_gemini_key:
+            st.error("🚨 사이드바에 Gemini API Key를 입력해 주세요!")
+        else:
+            prompt = f"""
+            당신은 구독자 270만 유튜버이자 AI 콘텐츠 전문가입니다.
+            다음 조건에 따라 유튜브 대본을 작성하세요.
+
+            [크리에이터 페르소나]
+            - 채널명: {my_channel_name}
+            - 말투/톤앤매너: {my_channel_style}
+            - 주요 카테고리: {my_main_topic}
+
+            [제작 주제]
+            - 주제: {topic_input}
+            - 포맷: {script_format}
+
+            [대본 작성 지침]
+            1. 오프닝: 시청자의 시선을 3초 만에 사로잡는 강력한 후킹 문구 (내 채널 시그니처 인사말 포함)
+            2. 본론: 3가지 핵심 꿀팁/핵심 내용으로 명확히 구분
+            3. 클로징: 구독과 좋아요를 유도하는 마무리 인사
+            4. 지문 표기: 화면 자막 코멘트 및 화면 연출 지시어 포함
+            """
+            
+            with st.spinner("🧠 내 채널 말투를 학습하여 맞춤 대본 작성 중..."):
+                script_result = generate_gemini_text(clean_gemini_key, prompt)
+                if script_result.startswith("오류_") or script_result.startswith("통신오류"):
+                    st.error(f"❌ Gemini AI 대본 생성 오류: {script_result}")
+                else:
+                    st.session_state['generated_script'] = script_result
+                    st.success("🎉 내 채널 전용 맞춤 대본 작성이 완료되었습니다!")
+
+    if 'generated_script' in st.session_state:
+        st.subheader("📄 생성된 원클릭 대본")
+        st.text_area("대본 내용 (복사 가능)", value=st.session_state['generated_script'], height=350)
+        
+        if include_tts:
+            st.subheader("🎙️ Edge-TTS 기반 무료 AI 나레이션 음성 파일")
+            with st.spinner("🎧 AI 나레이션 음성을 생성하는 중입니다..."):
+                clean_text = re.sub(r'\[.*?\]|\(.*?\)', '', st.session_state['generated_script'])
+                clean_text = clean_text.replace('\n', ' ')[:500]
+                
+                asyncio.run(text_to_speech_edge(clean_text, voice="ko-KR-SunHiNeural", output_file="speech.mp3"))
+                
+                with open('speech.mp3', 'rb') as audio_file:
+                    audio_bytes = audio_file.read()
+                    st.audio(audio_bytes, format='audio/mp3')
+                    st.download_button("💾 음성 파일 다운로드 (.mp3)", data=audio_bytes, file_name="script_speech.mp3", mime="audio/mp3")
+
+        st.divider()
+        st.subheader("🎨 맞춤형 대표 썸네일 이미지 제작")
+        thumb_bytes = create_thumbnail_image(topic_input, my_main_topic)
+        st.image(thumb_bytes, caption="실시간 생성된 고화질 대표 썸네일", width=500)
+        st.download_button("🖼️ 썸네일 이미지 다운로드 (.png)", data=thumb_bytes, file_name="thumbnail.png", mime="image/png")
+
+# =========================================================
+# TAB 3: CapCut 연동 & 영상 URL 분석기
+# =========================================================
+with tab3:
+    st.subheader("✂️ CapCut(캡컷) 자동 편집 & 타사 영상 분석 스튜디오")
+    target_url = st.text_input("🔗 분석할 타깃 유튜브 영상 URL", value="https://www.youtube.com/watch?v=c8fMl6Oqle4")
+    
+    if st.button("🔎 타깃 영상 구조 및 떡상 요소 AI 정밀 분석"):
+        clean_gemini_key = gemini_api_key_input.strip()
+        if not clean_gemini_key:
+            st.error("🚨 사이드바에 Gemini API Key를 입력해 주세요!")
+        else:
+            prompt_analyze = f"""
+            다음 유튜브 영상 URL({target_url})에 대해 시청률을 극대화한 구조 분석 보고서를 작성하세요.
+            1. 예상 썸네일 및 카피 문구 전략
+            2. 초반 5초 후킹 방식 분석
+            3. 영상의 전개 구조 (서론-본론-결론 타임라인 분석)
+            4. 우리가 벤치마킹하여 적용할 수 있는 3가지 떡상 포인트
+            """
+            with st.spinner("📊 타깃 영상 알고리즘 구조 파싱 중..."):
+                analysis_res = generate_gemini_text(clean_gemini_key, prompt_analyze)
+                st.markdown(analysis_res)
