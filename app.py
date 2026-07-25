@@ -173,8 +173,7 @@ with st.sidebar:
     st.header("⚙️ 시스템 설정")
     st.caption("네이버 검색광고 API 인증 상태")
     
-    naver_api_key = st.text_input("API Key", value="010000000017bb464266907081adf935c8e92cba1e5789796bf00d9d66a86dc1b3b7645ce1
-", type="password")
+    naver_api_key = st.text_input("API Key", value="010000000017bb464266907081adf935c8e92cba1e5789796bf00d9d66a86dc1b3b7645ce1", type="password")
     naver_secret_key = st.text_input("Secret Key", value="AQAAAAAXu0ZCZpBwga35NcjpLLoetGRNauzb4zwzBIjguwnnow==", type="password")
     naver_customer_id = st.text_input("Customer ID", value="4455579")
     
