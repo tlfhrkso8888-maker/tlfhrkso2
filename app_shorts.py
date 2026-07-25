@@ -166,21 +166,25 @@ def create_thumbnail_image(title_text, category_text):
 tab1, tab2, tab3 = st.tabs(["📊 인급동 떡상 스튜디오", "🎙️ AI 대본 & 무료 TTS / 썸네일", "✂️ CapCut 연동 / 영상 분석"])
 
 # =========================================================
-# TAB 1: 인급동 떡상 스튜디오 (쇼츠/롱폼 정밀 필터 지원)
+# TAB 1: 인급동 떡상 스튜디오 (기간선택 + 쇼츠/롱폼 정밀 수집)
 # =========================================================
 with tab1:
     st.subheader("🔥 실시간 급상승 & 떡상 배수(Viral Score) 분석기")
-    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 📱 쇼츠와 🎬 롱폼으로 정확히 구분하여 수집합니다.")
+    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 원하는 기간별로 실시간 분석합니다.")
     
-    col_a, col_b, col_c, col_d = st.columns([1, 1.3, 1, 1])
+    col_a, col_b, col_c = st.columns([1, 1.2, 1])
     with col_a:
         country_code = st.selectbox("🌍 대상 국가", ["대한민국 (KR)", "미국 (US)", "일본 (JP)"], index=0)
         c_code = country_code.split("(")[1].replace(")", "").strip()
     with col_b:
         format_filter = st.radio("🎬 영상 구분", ["📱 쇼츠만 (60초 이하)", "🎬 롱폼만", "전체 보기"], index=0, horizontal=True)
     with col_c:
-        search_query = st.text_input("🔍 키워드 필터 (선택)", value="", placeholder="예: AI, 먹방, 꿀팁")
+        period_choice = st.selectbox("📅 게시 기간 선택", ["1주일 이내", "1개월 이내", "2개월 이내", "3개월 이내", "6개월 이내", "1년 이내"], index=1)
+
+    col_d, col_e = st.columns([2, 1])
     with col_d:
+        search_query = st.text_input("🔍 키워드 필터 (선택)", value="", placeholder="예: AI, 먹방, 꿀팁 (비워두면 기간 내 인기순)")
+    with col_e:
         max_items = st.slider("📊 수집 개수", min_value=10, max_value=50, value=20, step=10)
         
     btn_fetch = st.button("🚀 실시간 떡상 콘텐츠 수집 및 분석 시작")
@@ -192,15 +196,28 @@ with tab1:
         else:
             try:
                 youtube = build('youtube', 'v3', developerKey=clean_yt_key)
-                with st.spinner("🔍 선택하신 조건에 맞는 영상을 수집하고 분석 중입니다..."):
+                
+                # 기간 파싱 (ISO 8601 publishedAfter 날짜 계산)
+                period_days_map = {
+                    "1주일 이내": 7,
+                    "1개월 이내": 30,
+                    "2개월 이내": 60,
+                    "3개월 이내": 90,
+                    "6개월 이내": 180,
+                    "1년 이내": 365
+                }
+                days_ago = period_days_map.get(period_choice, 30)
+                published_after = (datetime.utcnow() - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+                with st.spinner(f"🔍 [{period_choice}] 조건에 맞춰 실시간 유튜브 알고리즘을 분석 중입니다..."):
                     
-                    # 쇼츠만 선택한 경우: videoDuration='short' API 조건 직접 사용
                     if format_filter == "📱 쇼츠만 (60초 이하)":
                         q_str = search_query.strip() if search_query.strip() else "쇼츠"
                         res = youtube.search().list(
                             part="snippet",
                             type="video",
                             videoDuration="short",
+                            publishedAfter=published_after,
                             q=q_str,
                             order="viewCount",
                             regionCode=c_code,
@@ -213,6 +230,7 @@ with tab1:
                             part="snippet",
                             type="video",
                             videoDuration="medium",
+                            publishedAfter=published_after,
                             q=q_str,
                             order="viewCount",
                             regionCode=c_code,
@@ -224,6 +242,7 @@ with tab1:
                             res = youtube.search().list(
                                 part="snippet",
                                 type="video",
+                                publishedAfter=published_after,
                                 q=search_query.strip(),
                                 order="viewCount",
                                 regionCode=c_code,
@@ -240,7 +259,7 @@ with tab1:
                             v_ids = [item['id'] for item in res.get('items', [])]
 
                     if not v_ids:
-                        st.warning("⚠️ 검색 조건에 맞는 영상이 없습니다. 키워드를 변경해 보세요.")
+                        st.warning(f"⚠️ [{period_choice}] 검색 조건에 맞는 영상이 없습니다. 키워드나 기간을 변경해 보세요.")
                     else:
                         v_details = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(v_ids)).execute()
                         c_ids = [v['snippet']['channelId'] for v in v_details.get('items', [])]
@@ -278,7 +297,7 @@ with tab1:
                         
                         viral_results = sorted(viral_results, key=lambda x: x['viral_ratio'], reverse=True)
                         st.session_state['viral_results'] = viral_results
-                        st.success(f"🎉 성공적으로 {len(viral_results)}개의 [{format_filter}] 영상 및 떡상 배수를 수집했습니다!")
+                        st.success(f"🎉 성공적으로 [{period_choice}] 내 {len(viral_results)}개의 [{format_filter}] 실시간 데이터를 분석했습니다!")
                         
             except Exception as e:
                 st.error(f"❌ YouTube API 수집 오류 발생: {e}")
@@ -301,7 +320,7 @@ with tab1:
                         tag_html = f"<span class='long-badge'>🎬 Long-form ({item['time_str']})</span>"
                         
                     st.markdown(f"#### {idx}위. {item['title']} {tag_html}", unsafe_allow_html=True)
-                    st.markdown(f"📺 **채널**: {item['channel']} | 👥 **구독자**: {item['subs']:,}명 | 🔥 **조회수**: {item['views']:,}회")
+                    st.markdown(f"📺 **채널**: {item['channel']} | 👥 **구독자**: {item['subs']:,}명 | 🔥 **조회수**: {item['views']:,}회 | 📅 **게시일**: {item['published']}")
                     st.markdown(f"⚡ **떡상 배수**: <span class='viral-badge'>체급 대비 x{item['viral_ratio']}배 떡상!</span>", unsafe_allow_html=True)
                     
                     if item['is_shorts']:
