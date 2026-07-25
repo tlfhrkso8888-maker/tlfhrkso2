@@ -37,10 +37,26 @@ st.markdown("""
     .viral-badge {
         background-color: #FF4B4B;
         color: white;
-        padding: 4px 8px;
+        padding: 3px 8px;
         border-radius: 6px;
         font-weight: bold;
-        font-size: 13px;
+        font-size: 12px;
+    }
+    .shorts-badge {
+        background-color: #E60023;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 12px;
+    }
+    .long-badge {
+        background-color: #2563EB;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -70,6 +86,25 @@ with st.sidebar:
 # ---------------------------------------------------------
 # 3. Helper 함수
 # ---------------------------------------------------------
+def parse_duration(duration_str):
+    """ISO 8601 재생시간(PT1M30S)을 총 초(second) 및 보기 좋은 문자열로 변환"""
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match:
+        return 0, "00:00"
+    
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    
+    total_seconds = hours * 3600 + minutes * 60 + seconds
+    
+    if hours > 0:
+        time_format = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        time_format = f"{minutes:02d}:{seconds:02d}"
+        
+    return total_seconds, time_format
+
 def get_channel_subscribers(youtube, channel_ids):
     if not channel_ids:
         return {}
@@ -83,7 +118,6 @@ def get_channel_subscribers(youtube, channel_ids):
     return sub_map
 
 def generate_gemini_text(api_key, prompt):
-    # Gemini 2.0 Flash 호출
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -93,7 +127,6 @@ def generate_gemini_text(api_key, prompt):
             result = res.json()
             return result['candidates'][0]['content']['parts'][0]['text']
         else:
-            # Fallback 1.5 Flash
             fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
             res_fb = requests.post(fallback_url, headers=headers, json=payload, timeout=30)
             if res_fb.status_code == 200:
@@ -127,19 +160,21 @@ def create_thumbnail_image(title_text, category_text):
 tab1, tab2, tab3 = st.tabs(["📊 인급동 떡상 스튜디오", "🎙️ AI 대본 & 무료 TTS / 썸네일", "✂️ CapCut 연동 / 영상 분석"])
 
 # =========================================================
-# TAB 1: 인급동 떡상 스튜디오
+# TAB 1: 인급동 떡상 스튜디오 (쇼츠 / 롱폼 태그 정밀 분리)
 # =========================================================
 with tab1:
     st.subheader("🔥 실시간 급상승 & 떡상 배수(Viral Score) 분석기")
-    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 실시간 떡상 영상을 추적합니다.")
+    st.caption("구독자 체급 대비 폭발적인 조회수를 기록한 떡상 영상을 📱 쇼츠와 🎬 롱폼으로 정밀 분류합니다.")
     
-    col_a, col_b, col_c = st.columns([1, 1, 1])
+    col_a, col_b, col_c, col_d = st.columns([1, 1.2, 1, 1])
     with col_a:
         country_code = st.selectbox("🌍 대상 국가", ["대한민국 (KR)", "미국 (US)", "일본 (JP)"], index=0)
         c_code = country_code.split("(")[1].replace(")", "").strip()
     with col_b:
-        search_query = st.text_input("🔍 키워드 필터 (선택사항)", value="", placeholder="예: AI, 먹방, 주식 (비워두면 전체 인기순)")
+        format_filter = st.radio("🎬 영상 구분", ["전체 보기", "📱 쇼츠만 (60초 이하)", "🎬 롱폼만"], horizontal=True)
     with col_c:
+        search_query = st.text_input("🔍 키워드 필터 (선택사항)", value="", placeholder="예: AI, 먹방, 주식")
+    with col_d:
         max_items = st.slider("📊 수집 개수", min_value=10, max_value=50, value=20, step=10)
         
     btn_fetch = st.button("🚀 실시간 떡상 콘텐츠 및 트렌드 수집")
@@ -151,7 +186,7 @@ with tab1:
         else:
             try:
                 youtube = build('youtube', 'v3', developerKey=clean_yt_key)
-                with st.spinner("🔍 실시간 유튜브 인급동 알고리즘 분석 중..."):
+                with st.spinner("🔍 실시간 유튜브 인급동 알고리즘 및 영상 길이를 파싱 중..."):
                     if search_query.strip():
                         res = youtube.search().list(
                             part="snippet",
@@ -164,7 +199,7 @@ with tab1:
                         v_ids = [item['id']['videoId'] for item in res.get('items', []) if 'videoId' in item['id']]
                     else:
                         res = youtube.videos().list(
-                            part="snippet,statistics",
+                            part="snippet,statistics,contentDetails",
                             chart="mostPopular",
                             regionCode=c_code,
                             maxResults=max_items
@@ -174,7 +209,8 @@ with tab1:
                     if not v_ids:
                         st.warning("⚠️ 검색 조건에 맞는 영상이 없습니다. 다른 키워드를 입력해 보세요.")
                     else:
-                        v_details = youtube.videos().list(part="snippet,statistics", id=",".join(v_ids)).execute()
+                        # contentDetails를 포함하여 재생 시간(Duration) 가져오기
+                        v_details = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(v_ids)).execute()
                         c_ids = [v['snippet']['channelId'] for v in v_details.get('items', [])]
                         sub_map = get_channel_subscribers(youtube, c_ids)
                         
@@ -183,11 +219,23 @@ with tab1:
                             v_id = v['id']
                             snippet = v['snippet']
                             stats = v['statistics']
+                            content_details = v.get('contentDetails', {})
                             
+                            dur_str = content_details.get('duration', 'PT0S')
+                            total_sec, formatted_time = parse_duration(dur_str)
+                            
+                            # 60초 이하 및 제목/URL 특성을 종합 판별하여 쇼츠 여부 결정
+                            is_shorts = total_sec > 0 and total_sec <= 60
+                            
+                            # 포맷 필터 적용
+                            if format_filter == "📱 쇼츠만 (60초 이하)" and not is_shorts:
+                                continue
+                            if format_filter == "🎬 롱폼만" and is_shorts:
+                                continue
+
                             views = int(stats.get('viewCount', 0))
                             c_id = snippet['channelId']
                             subs = sub_map.get(c_id, 1)
-                            
                             viral_ratio = round(views / subs, 2) if subs > 0 else 0
                             
                             viral_results.append({
@@ -198,17 +246,19 @@ with tab1:
                                 'subs': subs,
                                 'viral_ratio': viral_ratio,
                                 'thumb': snippet['thumbnails'].get('medium', {}).get('url', ''),
-                                'published': snippet['publishedAt'][:10]
+                                'published': snippet['publishedAt'][:10],
+                                'is_shorts': is_shorts,
+                                'time_str': formatted_time
                             })
                         
                         viral_results = sorted(viral_results, key=lambda x: x['viral_ratio'], reverse=True)
                         st.session_state['viral_results'] = viral_results
-                        st.success(f"🎉 성공적으로 {len(viral_results)}개의 실시간 인기 영상 및 떡상 배수를 분석했습니다!")
+                        st.success(f"🎉 성공적으로 {len(viral_results)}개의 [{format_filter}] 인기 영상을 수집 및 분석했습니다!")
                         
             except Exception as e:
                 st.error(f"❌ YouTube API 수집 오류 발생: {e}")
-                st.info("📌 조치방법: Google Cloud 콘솔에서 'YouTube Data API v3'가 [사용]으로 켜져 있는지 확인해 주세요.")
 
+    # 결과 표출
     if 'viral_results' in st.session_state:
         st.divider()
         st.subheader("🏆 [떡상 배수 순] 실시간 인급동 랭킹")
@@ -220,10 +270,20 @@ with tab1:
                     if item['thumb']:
                         st.image(item['thumb'], use_container_width=True)
                 with col2:
-                    st.markdown(f"#### {idx}위. {item['title']}")
+                    # 쇼츠 / 롱폼 구분 뱃지 달기
+                    if item['is_shorts']:
+                        tag_html = f"<span class='shorts-badge'>📱 Shorts ({item['time_str']})</span>"
+                    else:
+                        tag_html = f"<span class='long-badge'>🎬 Long-form ({item['time_str']})</span>"
+                        
+                    st.markdown(f"#### {idx}위. {item['title']} {tag_html}", unsafe_allow_html=True)
                     st.markdown(f"📺 **채널**: {item['channel']} | 👥 **구독자**: {item['subs']:,}명 | 🔥 **조회수**: {item['views']:,}회")
                     st.markdown(f"⚡ **떡상 배수**: <span class='viral-badge'>체급 대비 x{item['viral_ratio']}배 떡상!</span>", unsafe_allow_html=True)
-                    st.markdown(f"👉 [유튜브에서 영상 보기](https://www.youtube.com/watch?v={item['v_id']})")
+                    
+                    if item['is_shorts']:
+                        st.markdown(f"👉 [유튜브 쇼츠로 보기](https://www.youtube.com/shorts/{item['v_id']})")
+                    else:
+                        st.markdown(f"👉 [유튜브 영상 보기](https://www.youtube.com/watch?v={item['v_id']})")
                 st.divider()
 
 # =========================================================
